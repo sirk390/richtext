@@ -1,6 +1,6 @@
 import wx
 from wx._richtext import RichTextCtrl
-import event
+from editor import event
 import io
 from editor.toolbar import RichTextToolbar
 from collections import defaultdict
@@ -529,14 +529,9 @@ RICHTEXT_ALT_DOWN = 4
 #wx.WXK_BROWSER_BACK, wx.WXK_BROWSER_FORWARD, wx.WXK_BROWSER_REFRESH, wx.WXK_BROWSER_STOP, wx.WXK_BROWSER_SEARCH, wx.WXK_BROWSER_FAVORITES, wx.WXK_BROWSER_HOME, wx.WXK_VOLUME_MUTE, wx.WXK_VOLUME_DOWN, wx.WXK_VOLUME_UP, wx.WXK_MEDIA_NEXT_TRACK, wx.WXK_MEDIA_PREV_TRACK, wx.WXK_MEDIA_STOP, wx.WXK_MEDIA_PLAY_PAUSE, wx.WXK_LAUNCH_MAIL, wx.WXK_LAUNCH_APP1, wx.WXK_LAUNCH_APP2
 
 class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
-    def __init__(self, parent, id=wx.ID_ANY, label="", pos=wx.DefaultPosition,
+    def __init__(self, document, parent, id=wx.ID_ANY, label="", pos=wx.DefaultPosition,
                  size=wx.DefaultSize, style=wx.NO_BORDER,
                  name="CustomRichTextControl"):
-        document = RichTextDocument(clone_multiply_list(Paragraph(RichText("hello hueuizeeuih ezhu zeiuhezu+ no word wrap, font sizes, bold, unde"*10)) * 1 +
-                           [Paragraph(RichText("Hello", style=TextStyle(point_size=10)), RichText("World", style=TextStyle(point_size=70))),
-                           Paragraph(Image(open("carpic.jpg", "rb").read())),
-                           Paragraph(RichText("hello hueuizeeuih ezhu zeiuhezu+ no word wrap, font sizes, bold, unde", style=TextStyle(point_size=12, weight=FontWeight.Bold))),
-                           Paragraph(RichText("hello hueuizeeuih ezhu zeiuhezu+ no word wrap, font sizes, bold, unde", style=TextStyle(style=FontStyle.Italic, underline=True)))], 100) )
         super().__init__(parent, document)
         self.SetBackgroundColour(wx.Colour("white"))
         self.Bind(wx.EVT_SIZE, self.OnSize2)

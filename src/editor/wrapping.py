@@ -17,6 +17,7 @@ def parse_text(text):
     if current:
         yield "".join(current)
 
+
 def iterate_wrap_positions(text):
     word_len = 0
     for i, c in enumerate(text):
@@ -28,6 +29,7 @@ def iterate_wrap_positions(text):
             word_len = 0
         else:
             word_len += 1
+
 
 def next_wrap_position(text, start_pos=0):
     word_len = 0
@@ -44,6 +46,7 @@ def next_wrap_position(text, start_pos=0):
         pos+=1
     return pos
 
+
 def wrap_next(text, text_extend_list, start_pos, max_width):
     start_width = text_extend_list[start_pos]
     next_pos = prev_pos = next_wrap_position(text, start_pos)
@@ -53,6 +56,7 @@ def wrap_next(text, text_extend_list, start_pos, max_width):
     if next_pos == len(text) and text_extend_list[next_pos] - start_width < max_width:
         return next_pos
     return (prev_pos)
+
 
 def wrap_text(text, style, max_width, first_width=None):
     text_extends = [0] + GetPartialTextExtents(text, style)

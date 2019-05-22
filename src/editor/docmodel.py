@@ -1,6 +1,6 @@
 import wx
 from enum import Enum
-from event import Event
+from editor.event import Event
 
 FontWeight = Enum("FontWeight", "Normal Light Bold")
 FontStyle = Enum("FontStyle", "Normal Slant Italic")
