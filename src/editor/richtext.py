@@ -9,7 +9,7 @@ from editor.docmodel import TextStyle, Paragraph, Image, RichTextDocument,\
     MoveCaret, ParagraphChange, MergeParagraphWithNext, RemoveCharacters,\
     SplitElement, SplitParagraph, RemoveElement, RemoveParagraph,\
     ChangeSelection, CharacterRangeWithId, ParagraphWithId, ElementWithId,\
-    InsertParagraph
+    InsertParagraph, InsertElement
 from editor.scrolled import RowScroller
 from editor.wrapping import wrap_text
 from editor.textextend_utils import GetTextExtentCached, GetPartialTextExtents
@@ -269,7 +269,7 @@ class PaintedParagraph():
         self.paragraph_offsets = []
 
     def __repr__(self):
-        return (f"PaintedParagraph<{self.width}, {self.height}, {self.elements}>" )
+        return (f"PaintedParagraph<{self.max_width}, {self.height}>" )
 
     def HasSpace(self, width):
         return self.insert_x + width <= self.max_width
@@ -871,6 +871,9 @@ class CustomRichTextControl(PaintedParagraphScrollerWithCaret):
         if type(elm) == RichText:
             self.Do(InsertCharacters(caret, chr(key)))
             self.Do(MoveCaret(caret, caret.move_offset(1)))
+        elif type(elm) == Image:
+            self.Do(InsertElement(caret.paragraph_id, caret.richtext_id + caret.offset, RichText(str(chr(key)))))
+            self.Do(MoveCaret(caret, self.document.move_right(caret)))
         self.EndUndo()
         self.ScrollIntoCaretView()
 
