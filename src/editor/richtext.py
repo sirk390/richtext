@@ -21,8 +21,8 @@ debug = False
 """
 features i would like:
     word wrap + no word wrap, font sizes, bold, underline, bullet lists, images (float and non float).
-    
-    
+
+
     remaining (difficult to less difficult):
         delete selection on insert (ok)
         delete (ok)
@@ -44,7 +44,7 @@ features i would like:
         export RTF?
         sync with other control
 
-        
+
 """
 
 CARET_WIDTH = 2
@@ -59,9 +59,9 @@ class CaretLayout():
             dc.DrawRectangle(rect.X, rect.Y, rect.Width, rect.Height)
 
 
-class RichtextLayout():
-    """ A simple text block with style, a width and a height (there can be 1 line maximum).
-        It may also have a caret, and selection (with self.start_offset and self.end_offset)
+class PaintedRichtext():
+    """ A Richtext (style, width and a height) with a width, height and is on only 1 line.
+        It can also have a caret and a selection (with self.start_offset and self.end_offset)
     """
     def __init__(self, width, height, text, style, caret=None):
         if height ==0:
@@ -71,14 +71,13 @@ class RichtextLayout():
         self.text = text
         self.style = style
         self.caret = caret
-        self.ON_MODIFIED = event.Event()
         self.text_extends = [0] + GetPartialTextExtents(self.text, self.style)
         self.selected = False
         self.start_offset = None
         self.end_offset = None
 
     def __repr__(self):
-        return (f"RichtextLayout<{self.width}, {self.height}, {self.text}>" )
+        return (f"PaintedRichtext<{self.width}, {self.height}, {self.text}>" )
 
     def Paint(self, dc, x, y):
         if self.style:
@@ -124,7 +123,7 @@ class RichtextLayout():
         """ Returns (offset, before_split)
         """
         if self.text == "":
-            return (0, True)        
+            return (0, True)
         dc = wx.MemoryDC()
         dc.SetFont(self.style.GetWxFont() if self.style else TextStyle().GetWxFont())
         # Todo add Font
@@ -142,8 +141,12 @@ class RichtextLayout():
         before_split = (result == len(self.text))
         return (result, before_split)
 
-
-class ImageLayout():
+    def CaretSectionCount(self):
+        """ e.g.: the Number of caret positions - """
+        return len(self.text)
+        
+        
+class PaintedImage():
     MARGIN = 10
     def __init__(self, width, height, wx_bitmap, style):
         self.wx_bitmap = wx_bitmap
@@ -168,7 +171,7 @@ class ImageLayout():
 
     def HitTest(self, x, y):
         """ Returns (offset, before_split)
-            Nb: Images are not split across lines so 'before_split' is just False. 
+            Nb: Images are not split across lines so 'before_split' is just False.
         """
         if x > self.width // 2 + self.MARGIN:
             return (1, True)
@@ -238,7 +241,7 @@ class PositionedLayout():
         return self.layout.SetCaret(caret, offset - self.split_offset)
 
     def GetCaretRect(self):
-        rect = self.layout.GetCaretRect() 
+        rect = self.layout.GetCaretRect()
         rect.Offset(self.x, self.y)
         return rect
 
@@ -250,11 +253,10 @@ class PositionedLayout():
         return self.layout.SetSelected(selected, start_offset, end_offset)
 
 
-class ParagraphLayout():
-    def __init__(self, praragraph_id, max_width, width=0, height=0):
-        self.praragraph_id = praragraph_id
+class PaintedParagraph():
+    def __init__(self, paragraph_id, max_width, width=0, height=0):
+        self.paragraph_id = paragraph_id
         self.max_width = max_width
-        self.width = width
         self.height = height
         self.insert_x = 0
         self.insert_y = 0
@@ -265,10 +267,9 @@ class ParagraphLayout():
         self.elements_by_id = defaultdict(list) # id => [(line, PositionedLayout) , ...]   
         self.current_line = 0
         self.paragraph_offsets = []
-        self.ON_MODIFIED = event.Event()
 
     def __repr__(self):
-        return (f"ParagraphLayout<{self.width}, {self.height}, {self.elements}>" )
+        return (f"PaintedParagraph<{self.width}, {self.height}, {self.elements}>" )
 
     def HasSpace(self, width):
         return self.insert_x + width <= self.max_width
@@ -282,20 +283,41 @@ class ParagraphLayout():
         self.lines.append([])
         self.current_line += 1
         
-    def OnChildModified(self, *args):
-        self.ON_MODIFIED.fire()
-
-    def AppendInline(self, idx, layout, split_offset=0, split_offset_end=0):
-        if not self.HasSpace(layout.width):
+    def Append(self, idx, painted_obj, split_offset=0, split_offset_end=0):
+        """ Append to the last line """
+        if not self.HasSpace(painted_obj.width):
             self.NextLine()
-        positionned_layout = PositionedLayout(self.insert_x, self.insert_y, layout, idx, split_offset, split_offset_end)
+        positionned_layout = PositionedLayout(self.insert_x, self.insert_y, painted_obj, idx, split_offset, split_offset_end)
         self.lines[self.current_line].append(positionned_layout)
         self.elements_by_id[idx].append((self.current_line, positionned_layout))
         self.elements.append(positionned_layout)
-        self.insert_x += layout.width
-        self.lastline_height = max(self.lastline_height, layout.height)
+        self.insert_x += painted_obj.width
+        self.lastline_height = max(self.lastline_height, painted_obj.height)
         self.height = self.fullline_height + self.lastline_height
-        self.width = max(self.width, self.insert_x)
+        
+    def AppendFlow(self, idx, rich_text):
+        """ Append an object by wrapping text, or moving images to next line if there is insufficient space"""
+        if type(rich_text) is RichText:
+            rich_text_offset = 0
+            if rich_text.text == "":
+                # For empty paragraphs
+                width, height = GetTextExtentCached("a", rich_text.style)
+                width = 0
+                painted_obj = PaintedRichtext(width, height, "", rich_text.style)
+                self.Append(idx, painted_obj, rich_text_offset, rich_text_offset)
+            else:
+                for text in wrap_text(rich_text.text, rich_text.style, self.max_width, first_width=self.max_width - self.insert_x ):
+                    width, height = GetTextExtentCached(text, rich_text.style)
+
+                    painted_obj = PaintedRichtext(width, height, text, rich_text.style) #rich_text_offset
+                    self.Append(idx, painted_obj, rich_text_offset, rich_text_offset+len(text))
+                    rich_text_offset += len(text)
+        elif type(rich_text) is Image:
+            # TODO: images should move to the next line if there isn't enough space
+            image = wx.Image(io.BytesIO(rich_text.image_data)) #wx.BITMAP_TYPE_JPEG
+            painted_obj = PaintedImage.from_wximage(image)
+            self.Append(idx, painted_obj, 0, 1)
+
 
     def Paint(self, dc, x, y):
         for text in self.elements:
@@ -306,33 +328,23 @@ class ParagraphLayout():
         
     def SetCaret(self, caret, richtext_idx=None, offset=None, before_split=False):
         """ sets the caret on this paragraph args = (richtext_idx, offset) """
-        
-        self.GetElement(richtext_idx, offset, before_split).SetCaret(caret, offset)
+        self.GetPaintedObject(richtext_idx, offset, before_split).SetCaret(caret, offset)
 
     def GetCaretRect(self, richtext_idx=None, offset=None, before_split=False):
-        return self.GetElement(richtext_idx, offset, before_split).GetCaretRect()
+        return self.GetPaintedObject(richtext_idx, offset, before_split).GetCaretRect()
 
-    def _GetElement(self, richtext_idx=None, offset=None, before_split=False):
+    def GetPaintedObject(self, richtext_idx=None, offset=None, before_split=False):
         """ Return a sub Element """
         matching = {}
-        for line, layout in self.elements_by_id[richtext_idx]:
-            if layout.split_offset <= offset <= layout.split_offset_end:
-                matching[offset == layout.split_offset_end] = [line, layout]
+        for line, painted_obj in self.elements_by_id[richtext_idx]:
+            if painted_obj.split_offset <= offset <= painted_obj.split_offset_end:
+                matching[offset == painted_obj.split_offset_end] = painted_obj
         if len(matching) == 1:
             return list(matching.values())[0]
         elif len(matching) > 1:
             return matching[before_split]
         else:
             raise Exception("Not found %s %s %s" % (richtext_idx, offset, self))
-    
-    def GetElement(self, richtext_idx=None, offset=None, before_split=False):
-        """ Return a sub Element (Text or Image etc...) """
-        line, layout = self._GetElement(richtext_idx, offset, before_split)
-        return layout
-
-    def GetElementLine(self, richtext_idx=None, offset=None, before_split=False):
-        line, layout = self._GetElement(richtext_idx, offset, before_split)
-        return line
 
     def IterateTexts(self, start_idx=None, end_idx=None, start_offset=None, end_offset=None):
         for elm in self.elements:
@@ -377,26 +389,9 @@ class ParagraphLayout():
         # pos is mainly for debugging
         result = cls(pos, max_width)
         for idx, rich_text in enumerate(paragraph.rich_texts):
-            if type(rich_text) is RichText:
-                rich_text_offset = 0
-                if rich_text.text == "":
-                    # For empty paragraphs
-                    width, height = GetTextExtentCached("a", rich_text.style)
-                    width = 0
-                    layout = RichtextLayout(width, height, "", rich_text.style) 
-                    result.AppendInline(idx, layout, rich_text_offset, rich_text_offset)
-                else:
-                    for text in wrap_text(rich_text.text, rich_text.style, max_width, first_width=max_width - result.insert_x ):
-                        width, height = GetTextExtentCached(text, rich_text.style)
-                            
-                        layout = RichtextLayout(width, height, text, rich_text.style) #rich_text_offset
-                        result.AppendInline(idx, layout, rich_text_offset, rich_text_offset+len(text))
-                        rich_text_offset += len(text)
-            elif type(rich_text) is Image:
-                image = wx.Image(io.BytesIO(rich_text.image_data)) #wx.BITMAP_TYPE_JPEG
-                layout = ImageLayout.from_wximage(image)
-                result.AppendInline(idx, layout, 0, 1)
+            result.AppendFlow(idx, rich_text)
         return result
+
 
 class CaretTimer(wx.EvtHandler):
     def __init__(self, OnBlink):
@@ -417,8 +412,8 @@ class CaretTimer(wx.EvtHandler):
         self.OnBlink(self.blink_flag)
 
 
-class ParagraphLayoutScroller(RowScroller):
-    """ RowScroller that displays a collection of ParagraphLayout.
+class PaintedParagraphScroller(RowScroller):
+    """ RowScroller that displays a collection of PaintedParagraph.
      """
     def __init__(self, parent, document, max_width=0):
         super().__init__(parent)
@@ -450,14 +445,14 @@ class ParagraphLayoutScroller(RowScroller):
 
     def Get(self, pos):
         row = self.document.elements[pos]
-        return ParagraphLayout.from_paragraph(pos, row, self.max_width)
+        return PaintedParagraph.from_paragraph(pos, row, self.max_width)
 
     def SetMaxWidth(self, max_width):
         self.max_width = max_width
 
 
-class ParagraphLayoutScrollerWithCaret(ParagraphLayoutScroller):
-    """ RowScroller that displays a collection of ParagraphLayout with Caret + Selection.
+class PaintedParagraphScrollerWithCaret(PaintedParagraphScroller):
+    """ RowScroller that displays a collection of PaintedParagraph with Caret + Selection.
     """
     def __init__(self, parent, document, max_width=0):
         super().__init__(parent, document)
@@ -528,7 +523,7 @@ RICHTEXT_ALT_DOWN = 4
 #IGNORE_KEYS = set([wx.WXK_ESCAPE, wx.WXK_START, wx.WXK_LBUTTON, wx.WXK_RBUTTON, wx.WXK_CANCEL, wx.WXK_MBUTTON, wx.WXK_CLEAR, wx.WXK_SHIFT, wx.WXK_ALT, wx.WXK_CONTROL, wx.WXK_PAUSE, wx.WXK_CAPITAL, wx.WXK_END, wx.WXK_HOME, wx.WXK_LEFT, wx.WXK_UP, wx.WXK_RIGHT, wx.WXK_DOWN, wx.WXK_SELECT, wx.WXK_x.WXK_EXECUTE, wx.WXK_SNAPSHOT, wx.WXK_INSERT, wx.WXK_HELP, wx.WXK_F1, wx.WXK_F2, wx.WXK_F3, wx.WXK_F4, wx.WXK_F5, wx.WXK_F6, wx.WXK_F7, wx.WXK_F8, wx.WXK_F9, wx.WXK_F10, wx.WXK_F11, wx.WXK_F12, wx.WXK_F13, wx.WXK_F14, wx.WXK_F15, wx.WXK_F16, wx.WXK_F17, wx.WXK_F18, wx.WXK_F19, wx.WXK_F20, wx.WXK_F21, wx.WXK_F22, wx.WXK_F23, wx.WXK_F24, wx.WXK_NUMLOCK, wx.WXK_SCROLL, wx.WXK_PAGEUP, wx.WXK_PAGEDOWN, wx.WXK_NUMPAD_F1, wx.WXK_NUMPAD_F2, wx.WXK_NUMPAD_F3, wx.WXK_NUMPAD_F4, wx.WXK_NUMPAD_HOME, wx.WXK_NUMPAD_LEFT, wx.WXK_NUMPAD_UP, wx.WXK_NUMPAD_RIGHT, wx.WXK_NUMPAD_DOWN, wx.WXK_NUMPAD_PAGEUP, wx.WXK_NUMPAD_PAGEDOWN, wx.WXK_NUMPAD_END, wx.WXK_NUMPAD_BEGIN, wx.WXK_NUMPAD_INSERT, wx.WXK_WINDOWS_LEFT])
 #wx.WXK_BROWSER_BACK, wx.WXK_BROWSER_FORWARD, wx.WXK_BROWSER_REFRESH, wx.WXK_BROWSER_STOP, wx.WXK_BROWSER_SEARCH, wx.WXK_BROWSER_FAVORITES, wx.WXK_BROWSER_HOME, wx.WXK_VOLUME_MUTE, wx.WXK_VOLUME_DOWN, wx.WXK_VOLUME_UP, wx.WXK_MEDIA_NEXT_TRACK, wx.WXK_MEDIA_PREV_TRACK, wx.WXK_MEDIA_STOP, wx.WXK_MEDIA_PLAY_PAUSE, wx.WXK_LAUNCH_MAIL, wx.WXK_LAUNCH_APP1, wx.WXK_LAUNCH_APP2
 
-class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
+class CustomRichTextControl(PaintedParagraphScrollerWithCaret):
     def __init__(self, document, parent, id=wx.ID_ANY, label="", pos=wx.DefaultPosition,
                  size=wx.DefaultSize, style=wx.NO_BORDER,
                  name="CustomRichTextControl"):
@@ -542,7 +537,7 @@ class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
         self.Bind(wx.EVT_SET_FOCUS, self.OnSetFocus)
         self.Bind(wx.EVT_KILL_FOCUS, self.OnKillFocus)
         self.Bind(wx.EVT_CHAR,self.OnChar)
-        
+
         accel_tbl = wx.AcceleratorTable([
                 (wx.ACCEL_CTRL,  ord('Z'), wx.ID_UNDO ),
                 (wx.ACCEL_CTRL,  ord('Y'), wx.ID_REDO ),
@@ -558,17 +553,7 @@ class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
         self.Bind (wx.EVT_MENU, self.OnCopy, id=wx.ID_COPY)
         self.Bind (wx.EVT_MENU, self.OnPaste, id=wx.ID_PASTE)
         self.Bind (wx.EVT_MENU, self.OnSelectAll, id=wx.ID_SELECTALL)
-        
-        #self.caret = Caret(self)
-        # GetRowCached(self, pos)
 
-        # (Paragraph_index, rich_text_index, character_index) for Text
-        # (Paragraph_index, ...) for Image
-        # when doc changes, update layout using events
-        #  * Add Caret Position to RichTextDocument
-
-        # question: how to handle selection, especially with ctrl+a
-        # The RichText should know which rows are displayed in the CustomScrolled, to be able to send refresh events
         self.dragging = False
         self.caret_start = None
         self.do_stack = []
@@ -584,7 +569,7 @@ class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
         result = self.HitTest(x, y)
         if result:
             return CaretPosition(*result)
-        
+
     def WordRight(self, count, flags):
         caret = self.document.GetCaretPosition()
         self.document.SetCaret(self.document.move_word_right(caret))
@@ -592,7 +577,7 @@ class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
     def MoveRight(self, count, flags):
         caret = self.document.GetCaretPosition()
         self.document.SetCaret(self.document.move_right(caret))
-    
+
     @contextmanager
     def Navigation(self, flags):
         self.ScrollIntoCaretView()
@@ -637,7 +622,7 @@ class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
         caret_rect = p.GetCaretRect(caret.richtext_id, caret.offset, caret.before_split)
         res = self.ScrollIntoViewXY(caret.paragraph_id, caret_rect.X, caret_rect.Y+caret_rect.Height+caret_rect.Height)
         newcaret = self.CaretHitTest(caret_rect.X+self.margin, self.GetLayoutY(caret.paragraph_id) + caret_rect.Y+caret_rect.Height+2)
-        if newcaret: 
+        if newcaret:
             self.document.SetCaret(newcaret)
 
     def MoveUp(self, count, flags):
@@ -650,9 +635,9 @@ class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
         caret_rect = p.GetCaretRect(caret.richtext_id, caret.offset, caret.before_split)
         self.ScrollIntoViewXY(caret.paragraph_id, caret_rect.X, caret_rect.Y-caret_rect.Height)
         newcaret = self.CaretHitTest(caret_rect.X+self.margin, self.GetLayoutY(caret.paragraph_id) + caret_rect.Y -2)
-        if newcaret: 
+        if newcaret:
             self.document.SetCaret(newcaret)
-    
+
     def GetCaretRect(self):
         caret = self.document.GetCaretPosition()
         if not caret:
@@ -663,7 +648,7 @@ class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
         caret_rect = p.GetCaretRect(caret.richtext_id, caret.offset, caret.before_split)
         caret_rect.Offset(self.margin, self.GetLayoutY(caret.paragraph_id))
         return caret_rect
-    
+
     def ScrollIntoCaretView(self):
         caret = self.document.GetCaretPosition()
         if not caret:
@@ -672,34 +657,34 @@ class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
         caret_rect = row.GetCaretRect(caret.richtext_id, caret.offset, caret.before_split)
         caret_rect.Offset(self.margin, 0)
         self.ScrollIntoRectView(caret.paragraph_id, caret_rect)
-        
+
     def PageUp(self, count, flags):
         caret_rect = self.GetCaretRect()
         res = self.Scroll(-self.inner_height)
         newcaret = self.CaretHitTest(caret_rect.X, caret_rect.Y + caret_rect.Height / 2)
-        if newcaret: 
+        if newcaret:
             self.document.SetCaret(newcaret)
 
     def PageDown(self, count, flags):
         caret_rect = self.GetCaretRect()
         res = self.Scroll(self.inner_height)
         newcaret = self.CaretHitTest(caret_rect.X, caret_rect.Y + caret_rect.Height / 2)
-        if newcaret: 
+        if newcaret:
             self.document.SetCaret(newcaret)
 
     def MoveHome(self, flags):
         self.document.SetCaret(self.document.start_of_document())
-        
+
     def MoveToLineStart(self, flags):
         caret = self.document.GetCaretPosition()
         if not caret:
             return
         # Depends on Layout. take the first after the newline
         p = self.GetRowCached(caret.paragraph_id)
-        line = p.GetElementLine(caret.richtext_id, caret.offset, caret.before_split)
+        obj = p.GetPaintedObject(caret.richtext_id, caret.offset, caret.before_split)
         newcaret = caret.clone()
-        newcaret.richtext_id = p.lines[line][0].rich_text_idx 
-        newcaret.offset = p.lines[line][0].split_offset
+        newcaret.richtext_id = obj.rich_text_idx
+        newcaret.offset = obj.split_offset
         newcaret.before_split = False
         self.document.SetCaret(newcaret)
 
@@ -711,10 +696,10 @@ class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
         if not caret:
             return
         p = self.GetRowCached(caret.paragraph_id)
-        line = p.GetElementLine(caret.richtext_id, caret.offset, caret.before_split)
+        obj = p.GetPaintedObject(caret.richtext_id, caret.offset, caret.before_split)
         newcaret = caret.clone()
-        newcaret.richtext_id = p.lines[line][-1].rich_text_idx 
-        newcaret.offset = p.lines[line][-1].split_offset_end
+        newcaret.richtext_id = obj.rich_text_idx
+        newcaret.offset = obj.split_offset_end
         newcaret.before_split = True
         self.document.SetCaret(newcaret)
 
@@ -734,13 +719,13 @@ class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
         actions.append(MoveCaret(None, caret.next_paragraph()))
         self.DoActions(actions)
         self.ScrollIntoCaretView()
-        
+
     def GetRemoveSelectedContentActions(self):
-        """ Returns (actions, new_caret) 
-            
+        """ Returns (actions, new_caret)
+
             We set the caret left of the text removed when we are at a start of paragraph or element
             (it would be even better to do it only when the paragraph or element is deleted, but this is a detail)
-            We add an paragraph + richtext when deleting everything. 
+            We add an paragraph + richtext when deleting everything.
         """
         selection = self.document.GetSelection()
         start, end = selection.start, selection.end
@@ -749,11 +734,11 @@ class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
         # Set the caret left of the text removed
         # if it is at the beginning? Add an empty paragraph
         new_caret = start
-        if (not self.document.is_begin_of_document(start) and 
-            self.document.is_begin_of_paragraph(start) or 
+        if (not self.document.is_begin_of_document(start) and
+            self.document.is_begin_of_paragraph(start) or
             self.document.is_begin_of_element(start)):
             new_caret = self.document.move_left(start, False)
-        actions.append(MoveCaret(self.document.GetCaretPosition(), new_caret)) 
+        actions.append(MoveCaret(self.document.GetCaretPosition(), new_caret))
         actions.append(ChangeSelection(self.document.GetSelection(), None))
         for part in selected_parts:
             part_type = type(part)
@@ -768,11 +753,11 @@ class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
         return actions, new_caret
 
     def RemoveSelectedContent(self):
-        
+
         actions, caret = self.GetRemoveSelectedContentActions()
         self.DoActions(actions)
         self.ScrollIntoCaretView()
-    
+
     def Backspace(self, event):
         if self.document.GetSelection():
             return self.RemoveSelectedContent()
@@ -795,7 +780,7 @@ class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
                 # if it becomes empty, remove it...
                 actions.append(MoveCaret(caret, self.document.move_to_element_start(new_carret)))
                 actions.append(RemoveElement(new_carret.paragraph_id, new_carret.richtext_id, elm))
-            else: 
+            else:
                 actions.append(RemoveCharacters(new_carret, self.document.getchar(new_carret)))
         elif caret.offset == 1 and elm.length() == 1:
             # If we are at the end a RichText, remove the richtext (images and 1 letter richtexts)
@@ -821,9 +806,9 @@ class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
                 self.Inserted(idx)
             elif change is ParagraphChange.Removed:
                 self.Removed(idx)
-        
+
     def DoActions(self, actions):
-        self.do_stack.append(actions) 
+        self.do_stack.append(actions)
         for action in actions:
             res = action.do(self.document)
             print (res)
@@ -836,10 +821,10 @@ class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
 
     def StartUndo(self):
         self.current_actions = []
-    
+
     def EndUndo(self):
-        self.do_stack.append(self.current_actions) 
-            
+        self.do_stack.append(self.current_actions)
+
     def Delete(self, event):
         if self.document.GetSelection():
             return self.RemoveSelectedContent()
@@ -865,7 +850,7 @@ class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
         if type(elm) is RichText:
             actions.append(RemoveCharacters(caret, elm.text[caret.offset]))
         self.DoActions(actions)
-    
+
     def InsertText(self, event, flags):
         actions = []
         caret = self.document.GetCaretPosition()
@@ -888,7 +873,7 @@ class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
             self.Do(MoveCaret(caret, caret.move_offset(1)))
         self.EndUndo()
         self.ScrollIntoCaretView()
-        
+
     def KeyboardNavigate(self, event, flags):
         with self.Navigation(flags):
             keyCode = event.GetKeyCode()
@@ -926,28 +911,28 @@ class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
                     success = self.MoveEnd(flags)
                 else:
                     success = self.MoveToLineEnd(flags)
-                
+
     def OnUndo(self, event):
         if self.do_stack:
             actions = self.do_stack.pop()
             for action in reversed(actions):
                 self.RedrawChanges(action.undo(self.document))
-                    
+
     def OnRedo(self, event):
         print ("Redo")
-        
+
     def OnCut(self, event):
         print ("Cut")
-        
+
     def OnCopy(self, event):
         print ("Copy")
-        
+
     def OnPaste(self, event):
         print ("Paste")
-        
+
     def OnSelectAll(self, event):
         self.document.SetSelection(Selection(self.document.start_of_document(), self.document.end_of_document()))
-        
+
     def OnChar(self, event):
         flags = 0
         if event.CmdDown():
@@ -974,7 +959,7 @@ class CustomRichTextControl(ParagraphLayoutScrollerWithCaret):
             self.Delete(event)
         else:
             self.InsertText(event, flags)
-            
+
     # Shift+Enter vs Enter
 
     def OnLeftDown(self, event):
@@ -1017,7 +1002,12 @@ if __name__ == '__main__':
         def __init__(self, parent=None):
             super(TestFrame, self).__init__(parent, size=(800,600), pos=(50, 50))
             vbox = wx.BoxSizer(wx.VERTICAL)
-            ctrl =  CustomRichTextControl(self)
+            document = RichTextDocument(clone_multiply_list(Paragraph(RichText("hello hueuizeeuih ezhu zeiuhezu+ no word wrap, font sizes, bold, unde"*10)) * 1 +
+                               [Paragraph(RichText("Hello", style=TextStyle(point_size=10)), RichText("World", style=TextStyle(point_size=70))),
+                               Paragraph(Image(open("../sample/carpic.jpg", "rb").read())),
+                               Paragraph(RichText("hello hueuizeeuih ezhu zeiuhezu+ no word wrap, font sizes, bold, unde", style=TextStyle(point_size=12, weight=FontWeight.Bold))),
+                               Paragraph(RichText("hello hueuizeeuih ezhu zeiuhezu+ no word wrap, font sizes, bold, unde", style=TextStyle(style=FontStyle.Italic, underline=True)))], 1000) )
+            ctrl =  CustomRichTextControl(document, self)
             vbox.Add(RichTextToolbar(self), 0, wx.EXPAND|wx.ALL)
             vbox.Add(ctrl, 3, wx.EXPAND|wx.ALL)
             rtc = RichTextCtrl(self)
@@ -1030,7 +1020,7 @@ if __name__ == '__main__':
                 rtc.BeginFontSize(100)
                 rtc.WriteText("World")
                 rtc.EndFontSize()
-                rtc.WriteImage(wx.Image(open("carpic.jpg", "rb")))
+                rtc.WriteImage(wx.Image(open("../sample/carpic.jpg", "rb")))
                 rtc.Newline()
                 rtc.BeginBold()
                 rtc.BeginFontSize(12)
@@ -1042,7 +1032,7 @@ if __name__ == '__main__':
                 rtc.WriteText("hello hueuizeeuih ezhu zeiuhezu+ no word wrap, font sizes, bold, unde")
                 rtc.EndItalic()
                 rtc.EndUnderline()
-            
+
             '''
                     document = RichTextDocument((Paragraph(RichText("hello hueuizeeuih ezhu zeiuhezu+ no word wrap, font sizes, bold, unde"*10)) * 30 +
                                        [Paragraph(RichText("Hello", style=TextStyle(point_size=10)), RichText("World", style=TextStyle(point_size=70))),

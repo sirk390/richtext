@@ -401,6 +401,7 @@ class RichTextDocument():
         
          A document should never contain empty elements. Empty Paragraphs are possible.
          
+         (We don't yet use a Rope of Gap Buffer for simplicity)
     """
     def __init__(self, elements, selection=None, caret_position=None):
         self.elements = elements
