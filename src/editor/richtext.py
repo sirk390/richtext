@@ -412,11 +412,10 @@ class CaretTimer(wx.EvtHandler):
         self.OnBlink(self.blink_flag)
 
 
-class PaintedParagraphScroller(RowScroller):
+class PaintedParagraphDataModel():
     """ RowScroller that displays a collection of PaintedParagraph.
      """
-    def __init__(self, parent, document, max_width=0):
-        super().__init__(parent)
+    def __init__(self, document, max_width=0):
         self.document = document
         self.max_width = max_width
 
@@ -451,11 +450,11 @@ class PaintedParagraphScroller(RowScroller):
         self.max_width = max_width
 
 
-class PaintedParagraphScrollerWithCaret(PaintedParagraphScroller):
+class PaintedParagraphDataModelWithCaret(PaintedParagraphDataModel):
     """ RowScroller that displays a collection of PaintedParagraph with Caret + Selection.
     """
-    def __init__(self, parent, document, max_width=0):
-        super().__init__(parent, document)
+    def __init__(self,  document, max_width=0):
+        super().__init__(document)
         self.max_width = max_width
         self.caret = CaretLayout()
         self.caret_timer = CaretTimer(self.OnBlink)
@@ -523,11 +522,13 @@ RICHTEXT_ALT_DOWN = 4
 #IGNORE_KEYS = set([wx.WXK_ESCAPE, wx.WXK_START, wx.WXK_LBUTTON, wx.WXK_RBUTTON, wx.WXK_CANCEL, wx.WXK_MBUTTON, wx.WXK_CLEAR, wx.WXK_SHIFT, wx.WXK_ALT, wx.WXK_CONTROL, wx.WXK_PAUSE, wx.WXK_CAPITAL, wx.WXK_END, wx.WXK_HOME, wx.WXK_LEFT, wx.WXK_UP, wx.WXK_RIGHT, wx.WXK_DOWN, wx.WXK_SELECT, wx.WXK_x.WXK_EXECUTE, wx.WXK_SNAPSHOT, wx.WXK_INSERT, wx.WXK_HELP, wx.WXK_F1, wx.WXK_F2, wx.WXK_F3, wx.WXK_F4, wx.WXK_F5, wx.WXK_F6, wx.WXK_F7, wx.WXK_F8, wx.WXK_F9, wx.WXK_F10, wx.WXK_F11, wx.WXK_F12, wx.WXK_F13, wx.WXK_F14, wx.WXK_F15, wx.WXK_F16, wx.WXK_F17, wx.WXK_F18, wx.WXK_F19, wx.WXK_F20, wx.WXK_F21, wx.WXK_F22, wx.WXK_F23, wx.WXK_F24, wx.WXK_NUMLOCK, wx.WXK_SCROLL, wx.WXK_PAGEUP, wx.WXK_PAGEDOWN, wx.WXK_NUMPAD_F1, wx.WXK_NUMPAD_F2, wx.WXK_NUMPAD_F3, wx.WXK_NUMPAD_F4, wx.WXK_NUMPAD_HOME, wx.WXK_NUMPAD_LEFT, wx.WXK_NUMPAD_UP, wx.WXK_NUMPAD_RIGHT, wx.WXK_NUMPAD_DOWN, wx.WXK_NUMPAD_PAGEUP, wx.WXK_NUMPAD_PAGEDOWN, wx.WXK_NUMPAD_END, wx.WXK_NUMPAD_BEGIN, wx.WXK_NUMPAD_INSERT, wx.WXK_WINDOWS_LEFT])
 #wx.WXK_BROWSER_BACK, wx.WXK_BROWSER_FORWARD, wx.WXK_BROWSER_REFRESH, wx.WXK_BROWSER_STOP, wx.WXK_BROWSER_SEARCH, wx.WXK_BROWSER_FAVORITES, wx.WXK_BROWSER_HOME, wx.WXK_VOLUME_MUTE, wx.WXK_VOLUME_DOWN, wx.WXK_VOLUME_UP, wx.WXK_MEDIA_NEXT_TRACK, wx.WXK_MEDIA_PREV_TRACK, wx.WXK_MEDIA_STOP, wx.WXK_MEDIA_PLAY_PAUSE, wx.WXK_LAUNCH_MAIL, wx.WXK_LAUNCH_APP1, wx.WXK_LAUNCH_APP2
 
-class CustomRichTextControl(PaintedParagraphScrollerWithCaret):
+class CustomRichTextControl(RowScroller):
     def __init__(self, document, parent, id=wx.ID_ANY, label="", pos=wx.DefaultPosition,
                  size=wx.DefaultSize, style=wx.NO_BORDER,
                  name="CustomRichTextControl"):
-        super().__init__(parent, document)
+        datamodel = PaintedParagraphDataModelWithCaret(document)
+        self.document = document
+        super().__init__(datamodel, parent)
         self.SetBackgroundColour(wx.Colour("white"))
         self.Bind(wx.EVT_SIZE, self.OnSize2)
         self.Bind(wx.EVT_LEFT_DOWN, self.OnLeftDown)
@@ -559,10 +560,10 @@ class CustomRichTextControl(PaintedParagraphScrollerWithCaret):
         self.do_stack = []
 
     def OnSetFocus(self, event):
-        self.ShowCaret()
+        self.datamodel.ShowCaret()
 
     def OnKillFocus(self, event):
-        self.ShowCaret(False)
+        self.datamodel.ShowCaret(False)
 
     def CaretHitTest(self, x, y):
         """ return a CaretPosition from an x,y"""
@@ -735,8 +736,8 @@ class CustomRichTextControl(PaintedParagraphScrollerWithCaret):
         # if it is at the beginning? Add an empty paragraph
         new_caret = start
         if (not self.document.is_begin_of_document(start) and
-            self.document.is_begin_of_paragraph(start) or
-            self.document.is_begin_of_element(start)):
+            (self.document.is_begin_of_paragraph(start) or
+             self.document.is_begin_of_element(start))):
             new_caret = self.document.move_left(start, False)
         actions.append(MoveCaret(self.document.GetCaretPosition(), new_caret))
         actions.append(ChangeSelection(self.document.GetSelection(), None))
@@ -860,10 +861,8 @@ class CustomRichTextControl(PaintedParagraphScrollerWithCaret):
         key = event.GetUnicodeKey()
         if key == wx.WXK_NONE:
             return
-        # Issue: when inserting on an Image, we would like to insert an RichText
-        # But now, we don't know of we are on an Image before executing the actions?
-        # We would need a multiple step DoActions()
-        # StartUndo / EndUndo
+        # We use StartUndo+EndUndo here because we need multiple actions in 
+        # which some depend on the preceding action result 
         self.StartUndo()
         self.Do(*actions)
         caret = self.document.GetCaretPosition()
@@ -983,7 +982,6 @@ class CustomRichTextControl(PaintedParagraphScrollerWithCaret):
         event.Skip()
 
     def OnMouseCaptureLost(self, event):
-        print ("OnMouseCaptureLost")
         self.dragging = False # Not sure if needed
 
     def OnLeftUp(self, event):
@@ -996,7 +994,7 @@ class CustomRichTextControl(PaintedParagraphScrollerWithCaret):
 
     def OnSize2(self, event):
         self.client_w, self.client_h = self.GetClientSize()
-        self.SetMaxWidth(self.client_w-self.margin*2)
+        self.datamodel.SetMaxWidth(self.client_w-self.margin*2)
         event.Skip()
         self.Refresh()
 
