@@ -7,6 +7,7 @@ from enum import Enum
 import math
 from editor.event import Event
 from editor.util import first
+from wx.lib.newevent import NewEvent
 
 
 class RowModel():
@@ -76,6 +77,8 @@ class DisplayedRow():
 
 
 
+RowScrollerScrolledEvent, EVT_ROWSCROLLER_SCROLLED = NewEvent()
+RowScrollerDisplayChanged, EVT_ROWSCROLLER_DISPLAY_CHANGED = NewEvent()
 
 class RowScroller(wx.Window):
     """ A VScrolledWindow that allows for pixel size scrolling
@@ -163,8 +166,8 @@ class RowScroller(wx.Window):
                 self.ScrollToLayout(self.displayed_rows[0].rowpos, self.displayed_rows[0].y)
         else:
             self.ScrollToLayout(self.displayed_rows[0].rowpos, self.displayed_rows[0].y)
-                        
         self.PaintRect(self.GetClientRect())
+        wx.PostEvent(self, RowScrollerDisplayChanged())     
             
 
     def IsVisibleRow(self, pos):
@@ -244,7 +247,7 @@ class RowScroller(wx.Window):
                 return (displayed_row.rowpos, ) + displayed_row.row.HitTest(x, y-displayed_row.y)
 
     def OnSize(self, event):
-        print ("OnSize", event)
+        #print ("OnSize", event)
         self.client_width, self.client_height = self.GetClientSize()
         self.inner_height = self.client_height
         self.BackBuffer = wx.Bitmap(self.client_width, self.client_height)
@@ -279,6 +282,15 @@ class RowScroller(wx.Window):
     def Estimate_RowHeight(self):
         return self.sum_heigth_of_rows_seen / len(self.rows_seen)
 
+    def GetTotalHeightEstimated(self):
+        return self.estimated_height
+
+    def GetScrollPosition(self):
+        return self.current_pos
+
+    def GetInnerHeight(self):
+        return self.inner_height
+    
     def RefreshScrollBar(self):
         # idx = self.GetApproximateIndex(self.layout_rows[0][0])
         # This line was removed as it was unused. Would we need this?
@@ -286,22 +298,15 @@ class RowScroller(wx.Window):
         self.SetScrollbar(wx.VERTICAL, self.current_pos, self.inner_height, self.estimated_height, refresh=True)
 
     def Display(self, displayed_row, position):
-        print ("Displaying", displayed_row)
-        
-        #self.Display(displayed_row, True)
-        self.displayed_rows.insert(position, displayed_row)# i].row = 
-        
-        #if top: 
-        #    self.displayed_rows.insert(position, displayed_row)
-        #else: 
-        #    self.displayed_rows.appendleft(displayed_row)
+        #print ("Displaying", displayed_row)
+        self.displayed_rows.insert(position, displayed_row)
 
     def Hide(self, top=True):
         if top: 
             result = self.displayed_rows.popleft()
         else: 
             result = self.displayed_rows.pop()
-        print ("Hiding", result)
+        #print ("Hiding", result)
 
     def FillRemaingRows(self):
         if self.displayed_rows: 
@@ -437,7 +442,8 @@ class RowScroller(wx.Window):
         self.current_pos += scrolled_pixels
         paint_rect = wx.Rect(0, 0, self.client_width, self.inner_height)
         self.PaintRect(paint_rect, refresh=True)
-        self.RefreshScrollBar()            
+        self.RefreshScrollBar()       
+        wx.PostEvent(self, RowScrollerScrolledEvent())     
             
     def ScrollTo(self, pos):
         '''Absolute scroll pos in pixels'''
@@ -453,6 +459,7 @@ class RowScroller(wx.Window):
         self.PaintRect(self.GetClientRect(), refresh=True)
         self.current_pos = pos
         self.RefreshScrollBar()
+        wx.PostEvent(self, RowScrollerScrolledEvent())     
 
     def OnScroll(self, event):
         event_type = event.GetEventType()
@@ -502,11 +509,6 @@ class ColorRow():
         dc.DrawRectangle(0, y, self.width, self.height)
         dc.DrawText(str(self.row_id), x, y)
         dc.DrawText(str(self.height), x+100, y)
-        '''fr = self.datamodel.GetFixedRow()
-        if fr is not None:
-            self.dc_back.SetBrush( wx.TRANSPARENT_BRUSH)
-            self.dc_back.SetPen( wx.BLACK_PEN )
-            self.dc_back.DrawRectangle(1, fr.y+1, self.client_width-2, fr.end_y - fr.y - 2)'''
 
     def HitTest(self, x, y):
         return (x, y)
@@ -521,6 +523,8 @@ class ColorRowModel():
     def __init__(self):
         self.count = 50
         self.real_count = 10000
+        random.seed(3)
+        
         self.rows = [ColorRow(idx) for idx in range(self.real_count)]
         self.MODIFIED = Event()
         self.INSERTED = Event()
@@ -579,15 +583,45 @@ if __name__ == '__main__':
     class TestFrame(wx.Frame):
         def __init__(self, parent=None):
             super(TestFrame, self).__init__(parent, size=(500, 600), pos=(100, 50))
-            vbox = wx.BoxSizer(wx.VERTICAL)
+            hbox = wx.BoxSizer(wx.HORIZONTAL)
             self.ctrl =  RowScroller(ColorRowModel(), self)
             self.ctrl.Bind(wx.EVT_LEFT_DOWN, self.OnLeftDown)
             self.ctrl.Bind(wx.EVT_RIGHT_DOWN, self.OnRightDown)
             self.ctrl.Bind(wx.EVT_CHAR, self.OnChar)
-            vbox.Add(self.ctrl, 1, wx.EXPAND|wx.ALL)
-            self.SetSizer(vbox)
+            self.ctrl.Bind(EVT_ROWSCROLLER_SCROLLED, self.OnScrolled)
+            self.ctrl.Bind(EVT_ROWSCROLLER_DISPLAY_CHANGED, self.OnScrolled)
+            
+            vbox = wx.BoxSizer(wx.VERTICAL)
+            vbox.Add(wx.StaticText(self, label="Estimated Height"))
+            self.txt1 = wx.TextCtrl(self, 0)
+            self.txt1.Disable()
+            vbox.Add(self.txt1, 0, wx.EXPAND|wx.ALL)
+            vbox.Add(wx.StaticText(self, label="Scroll Position"))
+            self.txt2 = wx.TextCtrl(self, 0)
+            self.txt2.Disable()
+            vbox.Add(self.txt2, 0, wx.EXPAND|wx.ALL)
+            vbox.Add(wx.StaticText(self, label="Inner Height"))
+            self.txt3 = wx.TextCtrl(self, 0)
+            self.txt3.Disable()
+            vbox.Add(self.txt3, 0, wx.EXPAND|wx.ALL)
+            vbox.Add(wx.StaticText(self, label="Based On"))
+            self.txt4 = wx.TextCtrl(self, style=wx.TE_MULTILINE, size=(10, 300))
+            self.txt4.Disable()
+            vbox.Add(self.txt4, 0, wx.EXPAND|wx.ALL)
+                        
+            hbox.Add(self.ctrl, 2, wx.EXPAND|wx.ALL)
+            hbox.Add(vbox, 1, wx.EXPAND|wx.ALL)
+            
+            
+            self.SetSizer(hbox)
             self.Layout()
             self.i = 10
+
+        def OnScrolled(self, event):
+            self.txt1.SetLabel(str(self.ctrl.GetTotalHeightEstimated()))
+            self.txt2.SetLabel(str(self.ctrl.GetScrollPosition()))
+            self.txt3.SetLabel(str(self.ctrl.GetInnerHeight()))
+            self.txt4.SetLabel(str(self.ctrl.height_of_rows_seen))
 
         def OnLeftDown(self, event):
             x, y = event.GetPosition()
