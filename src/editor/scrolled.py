@@ -119,22 +119,16 @@ class RowScroller(wx.Window):
             row = self.datamodel.Get(pos)
             self.AddHeighForEstimate(pos, row.height)
 
-    def SetFixedRow(self, index):
+    def SetFixedRow(self, rowpos):
         """ The current row is the row that stays fixed when rows are inserted, or removed"""
-        self.fixed_row = index
+        self.fixed_row = rowpos
+        self.PaintRect(self.GetClientRect())
 
     def InsertAfter(self, pos, row):
         pass
 
-    def GetFixedPostion(self):
-        if self.fixed_row is not None:
-            return self.fixed_row
-        return self.layout_row_ids[0]
-    
-    def GetFixedDiplayedRow(self):
-        if self.fixed_row is not None:
-            return self.fixed_row
-        return 0
+    def GetFixedRow(self):
+        return self.fixed_row
         
     """def StartLayout(self, rowpos, hidden_first_row=0, hidden_last_row=0):
         self.pixels_hidden_first_row = hidden_first_row
@@ -156,26 +150,22 @@ class RowScroller(wx.Window):
         self.layout_rows[row_id] = result = self.Get(row_id)
         return result
 
-    def OnInserted(self, pos):
-        inserted_index = None
-        for i in range(len(self.displayed_rows)):
-            if self.displayed_rows[i].rowpos == pos:
-                inserted_index = i
-        if inserted_index:
-            fixed_row = self.GetFixedDiplayedRow()
-            prev = self.displayed_rows[inserted_index] 
-            row = self.GetRowCached(pos)
-            displayed_row = DisplayedRow(prev.y, prev.y+row.height, pos, row)
-            self.Display(displayed_row, inserted_index)
-            y = prev.y+row.height
-            rowpos = self.datamodel.GetNextPos(pos)
-            for r in (list(self.displayed_rows))[inserted_index+1:]:
-                r.y = y
-                r.end_y = y + r.row.height
-                r.rowpos = rowpos = self.datamodel.GetNextPos(rowpos)
-                y += r.row.height
-            self.ClearExtraRows()
-            self.PaintRect(self.GetClientRect())
+    def OnInserted(self, insert_pos, reindex_func):
+        if self.fixed_row is not None:
+            self.fixed_row = reindex_func(self.fixed_row)
+        for d in self.displayed_rows:
+            d.rowpos = reindex_func(d.rowpos)          
+        if self.fixed_row:
+            fixed_row = first(self.displayed_rows, lambda e: e.rowpos == self.fixed_row)
+            if fixed_row:
+                self.ScrollToLayout(self.fixed_row, fixed_row.y)
+            else:
+                self.ScrollToLayout(self.displayed_rows[0].rowpos, self.displayed_rows[0].y)
+        else:
+            self.ScrollToLayout(self.displayed_rows[0].rowpos, self.displayed_rows[0].y)
+                        
+        self.PaintRect(self.GetClientRect())
+            
 
     def IsVisibleRow(self, pos):
         return (pos in self.layout_row_ids)
@@ -184,7 +174,6 @@ class RowScroller(wx.Window):
         fixed_row = self.GetFixedDiplayedRow()
         self.ScrollToLayout(fixed_row.rowpos, fixed_row.y)
         self.PaintRect(self.GetClientRect())
-
 
     def OnModified(self, rowpos):
         oldrow = self.layout_rows.get(rowpos)
@@ -232,8 +221,13 @@ class RowScroller(wx.Window):
                 self.PaintRow(self.dc_back, displayed_row.row, displayed_row.y, displayed_row.y + displayed_row.row.height)
             if displayed_row.y >= rect.bottom:
                 break
-        if refresh:
-            self.BlitToScreen(rect)
+            if self.fixed_row is not None:
+                self.dc_back.SetBrush( wx.TRANSPARENT_BRUSH)
+                self.dc_back.SetPen( wx.BLACK_PEN )
+                fixed_row = first(self.displayed_rows, lambda e: e.rowpos == self.fixed_row)
+                if fixed_row:
+                    self.dc_back.DrawRectangle(1, fixed_row.y+1, self.client_width-2, fixed_row.end_y - fixed_row.y - 2)
+        self.BlitToScreen(rect)
         self.dc_back.DestroyClippingRegion()
 
     def ScrollBackBufferRow(self, start_y, end_y, distance):
@@ -418,13 +412,12 @@ class RowScroller(wx.Window):
     def _ScrollRows(self, distance):
         for displayed_row in self.displayed_rows:
             displayed_row.y -= distance
+            displayed_row.end_y -= distance
 
     def Scroll(self, distance, bounded_scolling=True):
         if not self.displayed_rows:
             return
         self._ScrollRows(distance)
-        #for displayed_row in self.displayed_rows:
-        #    displayed_row.y -= distance
         self.FillRemaingRows()
         scrolled_pixels = distance
         # Now we might have scrolled too far
@@ -438,8 +431,6 @@ class RowScroller(wx.Window):
                 if self.displayed_rows[-1].y < self.inner_height - self.displayed_rows[-1].row.height:
                     dist = self.displayed_rows[-1].y - (self.inner_height - self.displayed_rows[-1].row.height) 
                     self._ScrollRows(dist)
-                    print (self.displayed_rows)
-                    print (scrolled_pixels, dist)
                     scrolled_pixels += dist
             self.FillRemaingRows()
         self.ClearExtraRows()
@@ -447,12 +438,9 @@ class RowScroller(wx.Window):
         paint_rect = wx.Rect(0, 0, self.client_width, self.inner_height)
         self.PaintRect(paint_rect, refresh=True)
         self.RefreshScrollBar()            
-        if scrolled_pixels != distance:
-            print ("Scrolled %d instead of %d: currentpos: %d / %d"% ( scrolled_pixels, distance, self.current_pos, self.estimated_height))
             
     def ScrollTo(self, pos):
         '''Absolute scroll pos in pixels'''
-        print ("ScrollTo", self.current_pos, pos)
         # pos varies between 0 and self.estimated_height - self.inner_height
         if abs(pos - self.current_pos) < 1000:
             # Avoid flickering, when scrolling small distances by doing a relative scroll
@@ -475,7 +463,6 @@ class RowScroller(wx.Window):
             self.Scroll(-self.inner_height)
         elif event_type == wx.EVT_SCROLLWIN_THUMBTRACK.typeId:
             pos = event.GetPosition()
-            print (pos, self.current_pos, self.estimated_height)
             self.ScrollTo(pos)
         elif event_type == wx.EVT_SCROLLWIN_THUMBRELEASE.typeId:
             pos = event.GetPosition()
@@ -515,6 +502,11 @@ class ColorRow():
         dc.DrawRectangle(0, y, self.width, self.height)
         dc.DrawText(str(self.row_id), x, y)
         dc.DrawText(str(self.height), x+100, y)
+        '''fr = self.datamodel.GetFixedRow()
+        if fr is not None:
+            self.dc_back.SetBrush( wx.TRANSPARENT_BRUSH)
+            self.dc_back.SetPen( wx.BLACK_PEN )
+            self.dc_back.DrawRectangle(1, fr.y+1, self.client_width-2, fr.end_y - fr.y - 2)'''
 
     def HitTest(self, x, y):
         return (x, y)
@@ -534,15 +526,18 @@ class ColorRowModel():
         self.INSERTED = Event()
         self.DELETED = Event()
     
-
     def Insert(self, pos, row):
         self.rows.insert(pos, row)
         self.count += 1
-        self.INSERTED.fire(pos)
+        self.INSERTED.fire(pos, lambda p: p+1 if p >=pos else p )
 
     def Remove(self, pos):
         self.rows = self.rows[:pos] + self.rows[pos+1:]
         self.count -= 1
+        if self.fixed_row > pos:
+            self.fixed_row -= 1
+        elif self.fixed_row == pos:
+            self.fixed_row = None
         self.DELETED.fire(pos)
 
     def Get(self, pos):
@@ -620,8 +615,8 @@ if __name__ == '__main__':
             key_code = event.GetKeyCode()
             if key_code == ord("f"):
                 x, y = event.GetPosition()
-                row, x, y = self.ctrl.HitTest(x, y)
-                self.ctrl.SetFixedRow(row)
+                rowpos, x, y = self.ctrl.HitTest(x, y)
+                self.ctrl.SetFixedRow(rowpos)
             if key_code == ord("i"):
                 self.OnLeftDown(event)
             if key_code == ord("d"):
